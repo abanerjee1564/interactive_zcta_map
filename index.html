@@ -1,221 +1,170 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html>
 <head>
   <meta charset="utf-8" />
-  <title>ZCTA adjacency map</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <title>Philadelphia ZCTA Adjacency Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  
   <style>
-    html,body,#map { height: 100%; margin:0; padding:0; }
-    .info-box {
-      position: absolute;
-      top: 10px; right: 10px;
-      z-index: 1000;
-      background: white;
-      padding: 8px 10px;
+    #map { height: 100vh; }
+    .legend { 
+      background: white; 
+      padding: 8px; 
+      line-height: 1.5em; 
       border-radius: 6px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
     }
-    .legend {
-      line-height: 18px;
-      color: #333;
-      background: white;
-      padding: 6px 8px;
-      border-radius: 6px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-      font-size: 13px;
-    }
-    .legend i {
-      width: 18px;
-      height: 18px;
-      float: left;
-      margin-right: 8px;
-      opacity: 0.7;
-    }
-    .legend button {
-      margin-top: 6px;
-      width: 100%;
-      padding: 4px;
-      font-size: 12px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      cursor: pointer;
-      background: #f8f8f8;
-    }
-    .legend button:hover {
+    .reset-btn {
+      display: block;
+      margin-top: 5px;
+      padding: 3px 6px;
       background: #eee;
-    }
-    .popup-link {
-      color: #1f77b4;
+      border: 1px solid #aaa;
+      border-radius: 4px;
+      text-align: center;
       cursor: pointer;
-      text-decoration: underline;
+    }
+    .reset-btn:hover {
+      background: #ddd;
     }
   </style>
 </head>
 <body>
   <div id="map"></div>
-  <div class="info-box" id="info">Click a ZCTA to highlight its adjacent ZCTAs</div>
 
-  <!-- Leaflet -->
+  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- PapaParse -->
-  <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-  <!--- SheetJS --->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <!-- PapaParse for CSV parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
   <script>
-  const GEOJSON_URL = 'zcta.geojson';
-  const PAIRS_CSV  = 'zcta_pairs.csv';
-  const ID_FIELD   = 'GEOID20';
+    // File paths (make sure these are in your repo)
+    const GEOJSON_URL = 'zcta.geojson';  // trimmed Philly ZCTAs
+    const PAIRS_FILE  = 'zcta_pairs.csv';             // full U.S. adjacency CSV
 
-  const map = L.map('map').setView([39.0, -95.7], 4);
+    // Map initialization with simple gray basemap
+    const map = L.map('map').setView([39.99, -75.15], 11); // Philly center
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18,
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/">OSM</a>, &copy; <a href="https://carto.com/">CARTO</a>',
+      subdomains: 'abcd',
+      maxZoom: 19
+    }).addTo(map);
 
-  // Styles
-  const defaultStyle   = { weight: 0.6, color: "#444", fillColor: "#ddd", fillOpacity: 0.6 };
-  const selectedStyle  = { weight: 2.5, color: "#d62728", fillColor: "#d62728", fillOpacity: 0.45 }; // red
-  const keepStyle      = { weight: 2.2, color: "#1f77b4", fillColor: "#1f77b4", fillOpacity: 0.35 }; // blue
-  const nonKeepStyle   = { weight: 1.5, color: "#8c564b", fillColor: "#8c564b", fillOpacity: 0.25 }; // brown
+    // Styles
+    const defaultStyle = {
+      color: "#555",
+      weight: 1,
+      fillColor: "#ccc",
+      fillOpacity: 0.5
+    };
 
-  // adjacency: { id -> { keep: Set(), nonKeep: Set() } }
-  const adjacency = new Map();
+    const highlightStyle = {
+      color: "#000",
+      weight: 2,
+      fillColor: "#2c7fb8",  // blue
+      fillOpacity: 0.7
+    };
 
-function loadPairs() {
-  return fetch("zcta_pairs.xlsx")
-    .then(res => res.arrayBuffer())
-    .then(data => {
-      const workbook = XLSX.read(data, { type: "array" });
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+    const baseHighlightStyle = {
+      color: "#000",
+      weight: 3,
+      fillColor: "#feb24c",  // orange for clicked ZIP
+      fillOpacity: 0.8
+    };
 
-      rows.forEach(row => {
-        const a = String(row['GEOID20']).padStart(5, '0');   // ensure string with leading zeros
-        const b = String(row['GEOID20.1']).padStart(5, '0');
-        const keep = String(row['keep']).trim();
+    // Storage
+    const idToLayer = new Map();   // ZIP -> Leaflet layer
+    const adjacency = new Map();   // ZIP -> {keep: Set(), nonKeep: Set()}
 
-        if (!a || !b) return;
+    // Load adjacency CSV
+    function loadPairs() {
+      return fetch(PAIRS_FILE)
+        .then(res => res.text())
+        .then(text => {
+          const data = Papa.parse(text, { header: true, skipEmptyLines: true }).data;
 
-        if (!adjacency.has(a)) adjacency.set(a, { keep: new Set(), nonKeep: new Set() });
-        if (!adjacency.has(b)) adjacency.set(b, { keep: new Set(), nonKeep: new Set() });
+          data.forEach(row => {
+            const a = String(row['GEOID20']).padStart(5, '0');
+            const b = String(row['GEOID20.1']).padStart(5, '0');
+            const keep = String(row['keep']).trim();
 
-        if (keep === "1") {
-          adjacency.get(a).keep.add(b);
-          adjacency.get(b).keep.add(a);
-        } else {
-          adjacency.get(a).nonKeep.add(b);
-          adjacency.get(b).nonKeep.add(a);
-        }
-      });
-    });
-}
+            if (!adjacency.has(a)) adjacency.set(a, { keep: new Set(), nonKeep: new Set() });
+            if (!adjacency.has(b)) adjacency.set(b, { keep: new Set(), nonKeep: new Set() });
 
-  let zctaLayer = L.geoJSON(null, { style: defaultStyle, onEachFeature }).addTo(map);
-  const idToLayer = new Map();
-
-  function onEachFeature(feature, layer) {
-    const id = feature.properties[ID_FIELD];
-    idToLayer.set(String(id), layer);
-    layer.bindTooltip(String(id), { direction: 'center' });
-    layer.on({ click: onFeatureClick });
-  }
-
-  function resetStyles() {
-    idToLayer.forEach(layer => layer.setStyle(defaultStyle));
-    document.getElementById('info').innerText = 'Click a ZCTA to highlight its adjacent ZCTAs';
-    map.closePopup();
-  }
-
-  function onFeatureClick(e, overrideId=null) {
-    const id = overrideId || String(e?.target?.feature?.properties[ID_FIELD]);
-    if (!id) return;
-    const layer = idToLayer.get(id);
-    if (!layer) return;
-
-    const entry = adjacency.get(id) || { keep: new Set(), nonKeep: new Set() };
-    const keepNeighbors = Array.from(entry.keep);
-    const nonKeepNeighbors = Array.from(entry.nonKeep);
-
-    idToLayer.forEach(l => l.setStyle(defaultStyle));
-
-    layer.setStyle(selectedStyle);
-
-    keepNeighbors.forEach(nid => {
-      const nl = idToLayer.get(String(nid));
-      if (nl) nl.setStyle(keepStyle);
-    });
-
-    nonKeepNeighbors.forEach(nid => {
-      const nl = idToLayer.get(String(nid));
-      if (nl) nl.setStyle(nonKeepStyle);
-    });
-
-    // Build popup with clickable links
-    const keepLinks = keepNeighbors.length
-      ? keepNeighbors.map(n => `<span class="popup-link" data-zip="${n}">${n}</span>`).join(', ')
-      : 'None';
-
-    const nonKeepLinks = nonKeepNeighbors.length
-      ? nonKeepNeighbors.map(n => `<span class="popup-link" data-zip="${n}">${n}</span>`).join(', ')
-      : 'None';
-
-    const popupHtml = `<div><strong>ZCTA:</strong> ${id}</div>
-      <div><strong>Neighbors (keep==1):</strong> ${keepLinks}</div>
-      <div><strong>Neighbors (keep==0):</strong> ${nonKeepLinks}</div>`;
-
-    layer.bindPopup(popupHtml).openPopup();
-
-    document.getElementById('info').innerText =
-      `Selected: ${id} — ${keepNeighbors.length} keep==1, ${nonKeepNeighbors.length} keep==0 neighbors`;
-
-    // Zoom to bounds of selected layer
-    try {
-      map.fitBounds(layer.getBounds(), { padding: [20,20] });
-    } catch(err){}
-
-    // Attach click events to popup links
-    map.once("popupopen", () => {
-      document.querySelectorAll(".popup-link").forEach(el => {
-        el.addEventListener("click", () => {
-          const targetId = el.getAttribute("data-zip");
-          onFeatureClick(null, targetId); // re-run selection
+            if (keep === "1") {
+              adjacency.get(a).keep.add(b);
+              adjacency.get(b).keep.add(a);
+            } else {
+              adjacency.get(a).nonKeep.add(b);
+              adjacency.get(b).nonKeep.add(a);
+            }
+          });
         });
-      });
-    });
-  }
+    }
 
-  Promise.all([ loadPairs(), fetch(GEOJSON_URL).then(r => r.json()) ])
-    .then(([_, geojson]) => {
-      zctaLayer.addData(geojson);
-      const b = zctaLayer.getBounds();
-      if (b.isValid()) map.fitBounds(b);
-    })
-    .catch(err => console.error(err));
+    // Load GeoJSON for Philly ZCTAs
+    function loadGeoJSON() {
+      return fetch(GEOJSON_URL)
+        .then(res => res.json())
+        .then(geojson => {
+          L.geoJSON(geojson, {
+            style: defaultStyle,
+            onEachFeature: (feature, layer) => {
+              const id = String(feature.properties.GEOID20).padStart(5, '0');
+              idToLayer.set(id, layer);
 
-  // --- Legend Control with Reset Button ---
-  const legend = L.control({position: 'bottomright'});
-  legend.onAdd = function(map) {
-    const div = L.DomUtil.create('div', 'legend');
-    div.innerHTML = `
-      <strong>Legend</strong><br>
-      <i style="background:#d62728"></i> Selected ZIP<br>
-      <i style="background:#1f77b4"></i> Neighbor (keep==1)<br>
-      <i style="background:#8c564b"></i> Neighbor (keep==0)<br>
-      <i style="background:#ddd; border:1px solid #444"></i> Other ZIPs
-      <br><button id="resetBtn">Reset Map</button>
-    `;
-    return div;
-  };
-  legend.addTo(map);
+              layer.on('click', () => {
+                resetHighlights();
 
-  map.whenReady(() => {
-    const btn = document.getElementById('resetBtn');
-    if (btn) btn.addEventListener('click', resetStyles);
-  });
+                // highlight clicked ZIP
+                layer.setStyle(baseHighlightStyle);
+                layer.bringToFront();
+                map.fitBounds(layer.getBounds());
+
+                // highlight neighbors (only if in Philly dataset & keep==1)
+                const neighbors = adjacency.get(id)?.keep || [];
+                neighbors.forEach(nid => {
+                  if (idToLayer.has(nid)) {
+                    const nl = idToLayer.get(nid);
+                    nl.setStyle(highlightStyle);
+                    nl.bringToFront();
+                  }
+                });
+
+                // popup with ID
+                layer.bindPopup(`<b>ZIP: ${id}</b>`).openPopup();
+              });
+            }
+          }).addTo(map);
+        });
+    }
+
+    // Reset highlights
+    function resetHighlights() {
+      idToLayer.forEach(layer => layer.setStyle(defaultStyle));
+    }
+
+    // Legend + Reset button
+    function addLegend() {
+      const legend = L.control({ position: 'bottomright' });
+      legend.onAdd = function() {
+        const div = L.DomUtil.create('div', 'legend');
+        div.innerHTML += "<strong>Legend</strong><br>";
+        div.innerHTML += `<i style="background:#feb24c;opacity:0.7;display:inline-block;width:12px;height:12px;margin-right:4px;"></i> Clicked ZIP<br>`;
+        div.innerHTML += `<i style="background:#2c7fb8;opacity:0.7;display:inline-block;width:12px;height:12px;margin-right:4px;"></i> Neighbor (keep=1)<br>`;
+        const btn = L.DomUtil.create('div', 'reset-btn', div);
+        btn.innerHTML = "Reset Map";
+        btn.onclick = resetHighlights;
+        return div;
+      };
+      legend.addTo(map);
+    }
+
+    // Run
+    Promise.all([loadPairs(), loadGeoJSON()]).then(addLegend);
   </script>
 </body>
 </html>
