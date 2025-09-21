@@ -9,7 +9,7 @@ shp_ll <- st_transform(shp, 4326)
 
 # Simplify geometry for web (tolerance in map units; tune as needed)
 shp_simp_ll <- st_simplify(st_make_valid(shp_ll), 
-                           dTolerance = 6000)
+                           dTolerance = 10000)
 
 # Make sure GEOID20 is a string (important)
 shp_simp_ll$GEOID20 <- as.character(shp_simp_ll$GEOID20)
