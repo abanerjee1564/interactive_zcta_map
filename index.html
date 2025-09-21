@@ -15,11 +15,12 @@
       padding: 8px; 
       line-height: 1.5em; 
       border-radius: 6px;
+      font-size: 14px;
     }
     .reset-btn {
       display: block;
-      margin-top: 5px;
-      padding: 3px 6px;
+      margin-top: 6px;
+      padding: 4px 8px;
       background: #eee;
       border: 1px solid #aaa;
       border-radius: 4px;
@@ -36,16 +37,16 @@
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- PapaParse for CSV parsing -->
-  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <!-- SheetJS for XLSX parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
   <script>
-    // File paths (make sure these are in your repo)
-    const GEOJSON_URL = 'zcta.geojson';  // trimmed Philly ZCTAs
-    const PAIRS_FILE  = 'zcta_pairs.csv';             // full U.S. adjacency CSV
+    // File paths (must be in your GitHub repo root or adjust paths)
+    const GEOJSON_URL = 'zcta.geojson';       // Philly-only ZCTAs
+    const PAIRS_FILE  = 'zcta_pairs.xlsx';    // adjacency pairs
 
     // Map initialization with simple gray basemap
-    const map = L.map('map').setView([39.99, -75.15], 11); // Philly center
+    const map = L.map('map').setView([39.99, -75.15], 11);
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/">OSM</a>, &copy; <a href="https://carto.com/">CARTO</a>',
@@ -64,7 +65,7 @@
     const highlightStyle = {
       color: "#000",
       weight: 2,
-      fillColor: "#2c7fb8",  // blue
+      fillColor: "#2c7fb8",  // blue for neighbors
       fillOpacity: 0.7
     };
 
@@ -79,17 +80,21 @@
     const idToLayer = new Map();   // ZIP -> Leaflet layer
     const adjacency = new Map();   // ZIP -> {keep: Set(), nonKeep: Set()}
 
-    // Load adjacency CSV
+    // Load adjacency XLSX
     function loadPairs() {
       return fetch(PAIRS_FILE)
-        .then(res => res.text())
-        .then(text => {
-          const data = Papa.parse(text, { header: true, skipEmptyLines: true }).data;
+        .then(res => res.arrayBuffer())
+        .then(data => {
+          const workbook = XLSX.read(data, { type: "array" });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-          data.forEach(row => {
+          rows.forEach(row => {
             const a = String(row['GEOID20']).padStart(5, '0');
             const b = String(row['GEOID20.1']).padStart(5, '0');
             const keep = String(row['keep']).trim();
+
+            if (!a || !b) return;
 
             if (!adjacency.has(a)) adjacency.set(a, { keep: new Set(), nonKeep: new Set() });
             if (!adjacency.has(b)) adjacency.set(b, { keep: new Set(), nonKeep: new Set() });
@@ -119,12 +124,12 @@
               layer.on('click', () => {
                 resetHighlights();
 
-                // highlight clicked ZIP
+                // Highlight clicked ZIP
                 layer.setStyle(baseHighlightStyle);
                 layer.bringToFront();
                 map.fitBounds(layer.getBounds());
 
-                // highlight neighbors (only if in Philly dataset & keep==1)
+                // Highlight neighbors (only if in Philly dataset & keep==1)
                 const neighbors = adjacency.get(id)?.keep || [];
                 neighbors.forEach(nid => {
                   if (idToLayer.has(nid)) {
@@ -134,7 +139,7 @@
                   }
                 });
 
-                // popup with ID
+                // Popup with ID
                 layer.bindPopup(`<b>ZIP: ${id}</b>`).openPopup();
               });
             }
