@@ -2,34 +2,13 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Philadelphia ZCTA Adjacency Map</title>
+  <title>Philly ZCTA Test Map</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  
+
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  
   <style>
     #map { height: 100vh; }
-    .legend { 
-      background: white; 
-      padding: 8px; 
-      line-height: 1.5em; 
-      border-radius: 6px;
-      font-size: 14px;
-    }
-    .reset-btn {
-      display: block;
-      margin-top: 6px;
-      padding: 4px 8px;
-      background: #eee;
-      border: 1px solid #aaa;
-      border-radius: 4px;
-      text-align: center;
-      cursor: pointer;
-    }
-    .reset-btn:hover {
-      background: #ddd;
-    }
   </style>
 </head>
 <body>
@@ -37,139 +16,41 @@
 
   <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- SheetJS for XLSX parsing -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
   <script>
-    // File paths (must be in your GitHub repo root or adjust paths)
-    const GEOJSON_URL = 'zcta.geojson';       // Philly-only ZCTAs
-    const PAIRS_FILE  = 'zcta_pairs.xlsx';    // adjacency pairs
+    const GEOJSON_URL = 'zcta.geojson'; // your trimmed file
 
-    // Map initialization with simple gray basemap
+    // Init map
     const map = L.map('map').setView([39.99, -75.15], 11);
 
+    // Simple gray basemap
     L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/">OSM</a>, &copy; <a href="https://carto.com/">CARTO</a>',
       subdomains: 'abcd',
       maxZoom: 19
     }).addTo(map);
 
-    // Styles
-    const defaultStyle = {
-      color: "#555",
-      weight: 1,
-      fillColor: "#ccc",
-      fillOpacity: 0.5
-    };
-
-    const highlightStyle = {
-      color: "#000",
-      weight: 2,
-      fillColor: "#2c7fb8",  // blue for neighbors
-      fillOpacity: 0.7
-    };
-
-    const baseHighlightStyle = {
-      color: "#000",
-      weight: 3,
-      fillColor: "#feb24c",  // orange for clicked ZIP
-      fillOpacity: 0.8
-    };
-
-    // Storage
-    const idToLayer = new Map();   // ZIP -> Leaflet layer
-    const adjacency = new Map();   // ZIP -> {keep: Set(), nonKeep: Set()}
-
-    // Load adjacency XLSX
-    function loadPairs() {
-      return fetch(PAIRS_FILE)
-        .then(res => res.arrayBuffer())
-        .then(data => {
-          const workbook = XLSX.read(data, { type: "array" });
-          const sheet = workbook.Sheets[workbook.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-
-          rows.forEach(row => {
-            const a = String(row['GEOID20']).padStart(5, '0');
-            const b = String(row['GEOID20.1']).padStart(5, '0');
-            const keep = String(row['keep']).trim();
-
-            if (!a || !b) return;
-
-            if (!adjacency.has(a)) adjacency.set(a, { keep: new Set(), nonKeep: new Set() });
-            if (!adjacency.has(b)) adjacency.set(b, { keep: new Set(), nonKeep: new Set() });
-
-            if (keep === "1") {
-              adjacency.get(a).keep.add(b);
-              adjacency.get(b).keep.add(a);
-            } else {
-              adjacency.get(a).nonKeep.add(b);
-              adjacency.get(b).nonKeep.add(a);
-            }
-          });
-        });
-    }
-
-    // Load GeoJSON for Philly ZCTAs
-    function loadGeoJSON() {
-      return fetch(GEOJSON_URL)
-        .then(res => res.json())
-        .then(geojson => {
-          L.geoJSON(geojson, {
-            style: defaultStyle,
-            onEachFeature: (feature, layer) => {
-              const id = String(feature.properties.GEOID20).padStart(5, '0');
-              idToLayer.set(id, layer);
-
-              layer.on('click', () => {
-                resetHighlights();
-
-                // Highlight clicked ZIP
-                layer.setStyle(baseHighlightStyle);
-                layer.bringToFront();
-                map.fitBounds(layer.getBounds());
-
-                // Highlight neighbors (only if in Philly dataset & keep==1)
-                const neighbors = adjacency.get(id)?.keep || [];
-                neighbors.forEach(nid => {
-                  if (idToLayer.has(nid)) {
-                    const nl = idToLayer.get(nid);
-                    nl.setStyle(highlightStyle);
-                    nl.bringToFront();
-                  }
-                });
-
-                // Popup with ID
-                layer.bindPopup(`<b>ZIP: ${id}</b>`).openPopup();
-              });
-            }
-          }).addTo(map);
-        });
-    }
-
-    // Reset highlights
-    function resetHighlights() {
-      idToLayer.forEach(layer => layer.setStyle(defaultStyle));
-    }
-
-    // Legend + Reset button
-    function addLegend() {
-      const legend = L.control({ position: 'bottomright' });
-      legend.onAdd = function() {
-        const div = L.DomUtil.create('div', 'legend');
-        div.innerHTML += "<strong>Legend</strong><br>";
-        div.innerHTML += `<i style="background:#feb24c;opacity:0.7;display:inline-block;width:12px;height:12px;margin-right:4px;"></i> Clicked ZIP<br>`;
-        div.innerHTML += `<i style="background:#2c7fb8;opacity:0.7;display:inline-block;width:12px;height:12px;margin-right:4px;"></i> Neighbor (keep=1)<br>`;
-        const btn = L.DomUtil.create('div', 'reset-btn', div);
-        btn.innerHTML = "Reset Map";
-        btn.onclick = resetHighlights;
-        return div;
-      };
-      legend.addTo(map);
-    }
-
-    // Run
-    Promise.all([loadPairs(), loadGeoJSON()]).then(addLegend);
+    // Load GeoJSON
+    fetch(GEOJSON_URL)
+      .then(res => res.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: {
+            color: "#555",
+            weight: 1,
+            fillColor: "#ccc",
+            fillOpacity: 0.5
+          },
+          onEachFeature: (feature, layer) => {
+            const id = feature.properties.GEOID20;
+            layer.on('click', () => {
+              console.log("Clicked ZIP:", id);
+              layer.bindPopup(`<b>ZIP: ${id}</b>`).openPopup();
+            });
+          }
+        }).addTo(map);
+      })
+      .catch(err => console.error("Error loading GeoJSON:", err));
   </script>
 </body>
 </html>
